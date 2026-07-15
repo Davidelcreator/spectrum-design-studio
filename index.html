@@ -178,6 +178,7 @@
       <h3>Print location</h3>
       <div class="products" id="locBtns"></div>
       <button class="btn ghost" id="anywhereBtn" style="margin-top:8px">Placement: Standard</button>
+      <div class="hint" id="placeHint" style="display:none;margin-top:8px"></div>
       <div class="hint">Each location holds its own design — a dot marks the ones you've designed.
       "Anywhere" opens the whole front/back for placement — that's 1-color vinyl territory.</div>
     </div>
@@ -1415,6 +1416,26 @@ function colorApplies(){
   return true;
 }
 
+// Framing box on catalog shirts, sized by the design's colour count:
+//   1 colour (vinyl / single screen) → place ANYWHERE: a large box over the front
+//   multi / full colour → limited to the screen-print screen, 17" × 24"
+// (~13 px per inch on the photo proof, chest basis). Only catalog shirts get this;
+// uploaded/saved photos keep their own adjustable print area.
+const PXIN_CUSTOM=13, SCREEN_IN={w:17,h:24};
+function printBoxFor(dtype){
+  if(dtype==='simple')return {x:150,y:126,w:260,h:330};              // 1 colour → anywhere
+  const w=Math.round(SCREEN_IN.w*PXIN_CUSTOM), h=Math.round(SCREEN_IN.h*PXIN_CUSTOM);  // 221 × 312
+  return {x:Math.round(280-w/2),y:Math.round(288-h/2),w,h};          // full colour → 17"×24" screen
+}
+function activeIsCatalog(){
+  return currentProduct==='custom'&&activePreset!=null&&!!taxOf(myProducts[activePreset]);
+}
+function applyPrintBox(){
+  const r=printBoxFor(quoteSel.designType);
+  customViews.front.rect=Object.assign({},r);
+  customViews.back.rect=Object.assign({},r);
+}
+
 const productCache=document.createElement('canvas');
 productCache.width=SIZE; productCache.height=SIZE;
 
@@ -2115,6 +2136,7 @@ function loadPreset(i){
       customViews[v].disp=stripWhiteBg(img)||null;   // knock out a white studio background (null if not white)
       if(--pending===0){
         activePreset=i;
+        if(taxOf(mp))applyPrintBox();   // catalog shirt → capability-based framing box
         syncCustomView();
         updateColorUI();   // spin button reflects the loaded views
         renderProductCache(); redraw(); renderPresets();
@@ -2208,7 +2230,7 @@ function setActive(o){active=o;buildProps();}
 // (tee ≈ 22" across = 204px, fleece ≈ 24" = 216px — PLACEHOLDER basis)
 function unitsText(o){
   if(!o||locationsFor().length<2)return '';
-  const pxin=currentProduct==='fleece'?9.0:9.27;
+  const pxin=currentProduct==='custom'?PXIN_CUSTOM:(currentProduct==='fleece'?9.0:9.27);
   const b=bounds(o);
   const w=(b.w*o.scale/pxin).toFixed(1), h=(b.h*o.scale/pxin).toFixed(1);
   if(currentLocation==='lsleeve'||currentLocation==='rsleeve')
@@ -2486,6 +2508,21 @@ function updateLocationUI(){
     if(currentProduct==='custom')buildStyles();   // refresh per-view photo hints
     renderProductCache(); redraw();
   });
+  // catalog shirts size the framing box automatically from the design's colours,
+  // so the manual "Anywhere" toggle is replaced by a status line
+  const anyBtn=document.getElementById('anywhereBtn');
+  const placeHint=document.getElementById('placeHint');
+  if(activeIsCatalog()){
+    anyBtn.style.display='none';
+    const oneColor=quoteSel.designType==='simple';
+    placeHint.style.display='';
+    placeHint.innerHTML=oneColor
+      ?'<b>1-color</b> (vinyl / single screen): place it <b>anywhere</b> on the shirt.'
+      :'<b>Full color</b>: limited to a <b>17″ × 24″</b> screen-print screen. Switch “Design type” in the quote to 1-color for anywhere placement.';
+  }else{
+    anyBtn.style.display='';
+    placeHint.style.display='none';
+  }
 }
 document.getElementById('anywhereBtn').onclick=()=>{
   vinylAnywhere=!vinylAnywhere;
@@ -2740,7 +2777,11 @@ function buildQuoteInputs(){
       if(!ok.has(id)&&q.sizes[id]){q.sizes['2XL']=(q.sizes['2XL']||0)+q.sizes[id];q.sizes[id]=0;}
     buildQuoteInputs();updateQuotes();
   });
-  quoteInputsEl.querySelectorAll('[data-dtype]').forEach(b=>b.onclick=()=>{q.designType=b.dataset.dtype;buildQuoteInputs();updateQuotes();});
+  quoteInputsEl.querySelectorAll('[data-dtype]').forEach(b=>b.onclick=()=>{
+    q.designType=b.dataset.dtype;
+    if(activeIsCatalog()){applyPrintBox();syncCustomView();updateLocationUI();renderProductCache();redraw();}
+    buildQuoteInputs();updateQuotes();
+  });
   quoteInputsEl.querySelectorAll('[data-loc]').forEach(b=>b.onclick=()=>{q.locations=+b.dataset.loc;buildQuoteInputs();updateQuotes();});
   Pricing.sizesFor(q.tier).forEach(s=>{
     document.getElementById('q_sz_'+s.id).oninput=e=>{
