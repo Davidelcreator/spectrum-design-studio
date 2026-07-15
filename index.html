@@ -104,6 +104,22 @@
   .preset span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .preset .rm{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;flex:none}
   .preset .rm:hover{color:var(--danger)}
+  /* brand → style → color catalog picker */
+  .catpick{display:flex;flex-direction:column;gap:10px}
+  .catrow label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.1em}
+  .catsel{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
+    font-size:13px;padding:8px 10px;cursor:pointer}
+  .catsel:focus{outline:none;border-color:var(--accent)}
+  .catcolors{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;max-height:240px;overflow-y:auto;padding:2px}
+  .catcolor{display:flex;flex-direction:column;align-items:center;gap:3px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:5px 4px;cursor:pointer;color:var(--text);font-size:10px}
+  .catcolor:hover{border-color:var(--accent)}
+  .catcolor.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .catcolor img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:5px;background:#fff}
+  .catcolor span{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+  .csupplied{display:flex;align-items:center;gap:8px;background:rgba(46,134,222,.12);border:1px solid var(--accent);
+    border-radius:8px;padding:8px 10px;font-size:12px;color:var(--text);margin-bottom:10px}
+  .csupplied b{color:var(--accent)}
   .empty{color:var(--muted);font-size:12px;text-align:center;padding:24px 8px;line-height:1.5}
   .hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
   .note{
@@ -1349,6 +1365,22 @@ let adjustPA=false;
 // "My Products" preset library: {name, src(dataURL), rect}
 let myProducts=[];
 let activePreset=null;
+// client brings their own garment (uploaded photo) → we charge printing only
+let clientSupplied=false;
+// brand → style picker state (catalog browse)
+let catBrand=null, catStyle=null;
+// derive {brand,style,color} from a product — explicit fields (ss-import v2+) or
+// parsed from a "Brand Style — Color" name. Returns null if it can't be classified.
+function taxOf(p){
+  if(!p)return null;
+  if(p.brand||p.style||p.color)
+    return {brand:(p.brand||'Other').trim(),style:(p.style||'').trim(),color:(p.color||p.name||'').trim()};
+  const m=/^(.*?)\s+[—–-]\s+(.*)$/.exec(p.name||'');
+  if(!m)return null;
+  const left=m[1].trim(), color=m[2].trim(), sp=left.lastIndexOf(' ');
+  return sp>0?{brand:left.slice(0,sp).trim(),style:left.slice(sp+1).trim(),color}
+             :{brand:left,style:'',color};
+}
 
 // per-product style selections
 const selections={};
@@ -1872,11 +1904,17 @@ document.getElementById('photoInput').onchange=e=>{
   r.onload=ev=>{
     const img=new Image();
     img.onload=()=>{
+      const side=photoTarget==='side';
       setCustomPhoto(img,photoTarget);
       photoTarget=null;
       activePreset=null;
+      if(!side){                     // customer's own garment photo → printing only
+        clientSupplied=true; quoteSel.clientSupplied=true;
+      }
       updateColorUI();               // spin button appears once ≥2 views exist
       renderProductCache();redraw();renderPresets();
+      if(currentProduct==='custom')buildStyles();   // show the client-supplied banner
+      updateQuotes();
     };
     img.src=ev.target.result;
   };
@@ -1951,28 +1989,73 @@ function renderPresets(){
     el.innerHTML='<div class="clipempty">No saved products yet. Upload a photo and Save it, add many with ＋ Photos, or Import a library file.</div>';
     return;
   }
+  // classifiable products (brand/style/color) get the hierarchical picker;
+  // anything else falls back to the flat list below.
+  const tax=myProducts.map((p,i)=>({i,p,t:taxOf(p)}));
+  const cat=tax.filter(x=>x.t);
+  if(cat.length>=3){renderCatalogPicker(el,cat,tax.filter(x=>!x.t));return;}
+  renderFlatPresets(el);
+}
+function renderCatalogPicker(el,cat,rest){
+  el.style.maxHeight='none'; el.style.overflow='visible';   // picker scrolls its own color grid
+  const brands=[...new Set(cat.map(x=>x.t.brand))].sort();
+  if(!brands.includes(catBrand))catBrand=brands[0];
+  // if a product is active, snap the picker to its brand/style so it stays in view
+  const act=cat.find(x=>x.i===activePreset);
+  if(act){catBrand=act.t.brand;}
+  const styles=[...new Set(cat.filter(x=>x.t.brand===catBrand).map(x=>x.t.style))].sort();
+  if(!styles.includes(catStyle))catStyle=styles[0];
+  if(act&&act.t.brand===catBrand)catStyle=act.t.style;
+  const colors=cat.filter(x=>x.t.brand===catBrand&&x.t.style===catStyle);
+
+  el.innerHTML=
+    '<div class="catpick">'+
+      '<div class="catrow"><label>Brand</label><select class="catsel" id="catBrandSel">'+
+        brands.map(b=>`<option${b===catBrand?' selected':''}>${b}</option>`).join('')+'</select></div>'+
+      '<div class="catrow"><label>Style</label><select class="catsel" id="catStyleSel">'+
+        styles.map(s=>`<option${s===catStyle?' selected':''}>${s||'—'}</option>`).join('')+'</select></div>'+
+      '<div class="catrow"><label>Color — '+colors.length+'</label><div class="catcolors">'+
+        colors.map(x=>{
+          const src=x.p.views?x.p.views.front.src:x.p.src;
+          return `<button class="catcolor${activePreset===x.i?' active':''}" data-idx="${x.i}" title="${x.t.color}">`+
+                 `<img src="${src}" alt=""><span>${x.t.color}</span></button>`;
+        }).join('')+'</div></div>'+
+    '</div>'+
+    (rest.length?'<div class="clipempty" style="margin-top:8px">Uploaded / other</div>':'');
+
+  document.getElementById('catBrandSel').onchange=e=>{catBrand=e.target.value;catStyle=null;renderPresets();};
+  document.getElementById('catStyleSel').onchange=e=>{catStyle=e.target.value==='—'?'':e.target.value;renderPresets();};
+  el.querySelectorAll('.catcolor').forEach(b=>b.onclick=()=>loadPreset(+b.dataset.idx));
+
+  // append any unclassifiable saved products as plain rows
+  rest.forEach(x=>el.appendChild(presetRow(x.p,x.i)));
+}
+function renderFlatPresets(el){
+  el.style.maxHeight=''; el.style.overflow='';   // restore the flat-list scroll cap
   el.innerHTML='';
-  myProducts.forEach((mp,i)=>{
-    const d=document.createElement('div');
-    d.className='preset'+(activePreset===i?' active':'');
-    const im=document.createElement('img'); im.src=mp.views?mp.views.front.src:mp.src;
-    const sp=document.createElement('span');
-    sp.textContent=mp.name+(mp.views&&mp.views.back?' (F+B)':'');
-    const rm=document.createElement('button'); rm.className='rm'; rm.title='Remove'; rm.textContent='✕';
-    rm.onclick=ev=>{
-      ev.stopPropagation();
-      myProducts.splice(i,1);
-      if(activePreset===i)activePreset=null;
-      else if(activePreset>i)activePreset--;
-      renderPresets();
-    };
-    d.appendChild(im); d.appendChild(sp); d.appendChild(rm);
-    d.onclick=()=>loadPreset(i);
-    el.appendChild(d);
-  });
+  myProducts.forEach((mp,i)=>el.appendChild(presetRow(mp,i)));
+}
+function presetRow(mp,i){
+  const d=document.createElement('div');
+  d.className='preset'+(activePreset===i?' active':'');
+  const im=document.createElement('img'); im.src=mp.views?mp.views.front.src:mp.src;
+  const sp=document.createElement('span');
+  sp.textContent=mp.name+(mp.views&&mp.views.back?' (F+B)':'');
+  const rm=document.createElement('button'); rm.className='rm'; rm.title='Remove'; rm.textContent='✕';
+  rm.onclick=ev=>{
+    ev.stopPropagation();
+    myProducts.splice(i,1);
+    if(activePreset===i)activePreset=null;
+    else if(activePreset>i)activePreset--;
+    renderPresets();
+  };
+  d.appendChild(im); d.appendChild(sp); d.appendChild(rm);
+  d.onclick=()=>loadPreset(i);
+  return d;
 }
 function loadPreset(i){
   const mp=myProducts[i];
+  clientSupplied=false; quoteSel.clientSupplied=false;   // catalog pick = we supply the blank
   const views=mp.views||{front:{src:mp.src,rect:mp.rect}};   // v1 compat
   let pending=0;
   for(const v of ['front','back','side']){
@@ -1989,6 +2072,8 @@ function loadPreset(i){
         syncCustomView();
         updateColorUI();   // spin button reflects the loaded views
         renderProductCache(); redraw(); renderPresets();
+        if(currentProduct==='custom')buildStyles();   // clear the client-supplied banner
+        updateQuotes();
       }
     };
     img.src=views[v].src;
@@ -2219,20 +2304,26 @@ function buildStyles(){
   if(currentProduct==='custom'){
     styleSection.style.display='';
     const vlabel=currentLocation==='back'?'back':'front';
-    styleSection.innerHTML='<h3>Product photo</h3><div class="tools">'+
-      '<button class="btn" id="photoBtn">⬆ Upload '+vlabel+' photo</button>'+
+    const csup=clientSupplied
+      ?'<div class="csupplied">👕 <span><b>Client-supplied garment</b> — you pay for printing only. '+
+        'Pick a shirt from the catalog below to switch back to a blank we supply.</span></div>'
+      :'';
+    styleSection.innerHTML=csup+'<h3>Product photo</h3><div class="tools">'+
+      '<button class="btn" id="photoBtn">⬆ Upload your own '+vlabel+' photo</button>'+
       '<button class="btn ghost" id="sidePhotoBtn">'+(customViews.side.img?'✓':'⬆')+' Side photo (for spin)</button>'+
       '<button class="btn ghost" id="adjustPABtn" '+(adjustPA?'style="border-color:var(--accent2);color:var(--accent2)"':'')+'>'+
       (adjustPA?'✓ Done adjusting':'Adjust print area')+'</button></div>'+
-      '<div class="hint">Each print location (Front/Back) keeps its own photo and print area. '+
-      'Prints blend into the photo’s real wrinkles and shading — photoreal proofs. '+
-      'In adjust mode: drag the green box to move the print area, its corner square to resize.</div>'+
-      '<h3 style="margin-top:16px">My products</h3>'+
+      '<div class="hint">Upload your own garment photo and we print on it (printing charge only), '+
+      'or pick from the catalog below. Each location keeps its own photo and print area; '+
+      'prints blend into the fabric’s real wrinkles for photoreal proofs. '+
+      'In adjust mode: drag the green box to move the print area, its corner to resize.</div>'+
+      '<h3 style="margin-top:16px">Shop the catalog — brand › style › color</h3>'+
+      '<div id="presetList" class="presets"></div>'+
+      '<h3 style="margin-top:16px;color:var(--muted);font-size:11px">Manage catalog (admin)</h3>'+
       '<div class="row" style="margin-bottom:8px">'+
       '<input class="clipsearch" style="margin:0;flex:1" id="presetName" placeholder="Name, e.g. Gildan 5000 Navy" />'+
       '<button class="btn" id="savePresetBtn" style="width:auto;padding:0 14px" title="Save current photo + print area">Save</button></div>'+
-      '<div id="presetList" class="presets"></div>'+
-      '<div class="row" style="margin-top:8px">'+
+      '<div class="row">'+
       '<button class="btn ghost" id="bulkBtn" title="Add many photos at once">＋ Photos</button>'+
       '<button class="btn ghost" id="exportLibBtn" title="Download library as a file">Export</button>'+
       '<button class="btn ghost" id="importLibBtn" title="Load a library file">Import</button></div>';
@@ -2490,7 +2581,7 @@ const Pricing=(()=>{
 
   // Returns every eligible print method with costs. `sizes` is an optional
   // {S:n,M:n,...} breakdown; without it the whole qty prices as standard.
-  function getQuotes({tier,shirtColor,qty,designType,colors,locations,sizes}){
+  function getQuotes({tier,shirtColor,qty,designType,colors,locations,sizes,clientSupplied}){
     const g=GARMENTS[tier];
     const avail=sizesFor(tier);
     let counts=null;
@@ -2499,8 +2590,10 @@ const Pricing=(()=>{
       qty=counts.reduce((a,s)=>a+s.n,0);
     }
     if(!qty)return [];
-    const blankBase=shirtColor==='white'?g.white:g.color;
-    const upTotal=counts?counts.reduce((a,s)=>a+s.up*s.n,0):0;
+    // client-supplied garment: we don't sell the blank, so no garment cost and
+    // no size upcharge — the customer pays for printing only.
+    const blankBase=clientSupplied?0:(shirtColor==='white'?g.white:g.color);
+    const upTotal=(clientSupplied||!counts)?0:counts.reduce((a,s)=>a+s.up*s.n,0);
     const blank=blankBase+upTotal/qty;   // per-shirt average incl. size upcharges
     const hasExt=counts?counts.some(s=>s.up>=3&&s.n>0):false;
     const hasStd=counts?counts.some(s=>s.up<3&&s.n>0):true;
@@ -2555,7 +2648,7 @@ const Pricing=(()=>{
 })();
 
 /* ---------- quote panel ---------- */
-const quoteSel={tier:'budget',qty:24,
+const quoteSel={tier:'budget',qty:24,clientSupplied:false,
   sizes:{S:0,M:24,L:0,XL:0,'2XL':0,'3XL':0,'4XL':0,'5XL':0,'6XL':0,'7XL':0},
   designType:'simple',colors:2,locations:1,margin:40};
 const fmtMoney=n=>'$'+n.toFixed(2);
@@ -2616,7 +2709,7 @@ function updateQuotes(){
   if(!el)return;
   const q=quoteSel, shirtColor=shirtColorKey();
   const effColors=q.designType==='spot'?q.colors:1;
-  const quotes=Pricing.getQuotes({tier:q.tier,shirtColor,qty:q.qty,designType:q.designType,colors:effColors,locations:q.locations,sizes:q.sizes});
+  const quotes=Pricing.getQuotes({tier:q.tier,shirtColor,qty:q.qty,designType:q.designType,colors:effColors,locations:q.locations,sizes:q.sizes,clientSupplied:q.clientSupplied});
   if(!quotes.length){
     el.innerHTML=`<div class="ticket-head"><b>Quote</b><span>no shirts yet</span></div>`+
       `<div class="qrow"><div class="qsub"><span>Enter size quantities above to price the order.</span></div></div>`;
@@ -2625,7 +2718,10 @@ function updateQuotes(){
   const eligible=quotes.filter(x=>x.eligible);
   const best=eligible.length?eligible.reduce((a,b)=>a.costPerShirt<=b.costPerShirt?a:b):null;
 
-  let html=`<div class="ticket-head"><b>Quote</b><span>${q.qty} × ${Pricing.GARMENTS[q.tier].blank}<br>${shirtColor==='white'?'white':'colored'} garment</span></div>`;
+  const headRight=q.clientSupplied
+    ?`${q.qty} shirts<br>client-supplied · printing only`
+    :`${q.qty} × ${Pricing.GARMENTS[q.tier].blank}<br>${shirtColor==='white'?'white':'colored'} garment`;
+  let html=`<div class="ticket-head"><b>Quote</b><span>${headRight}</span></div>`;
   quotes.forEach(x=>{
     if(!x.eligible){
       html+=`<div class="qrow na"><div class="qname">${x.method}<span class="price"><small>n/a</small></span></div>`+
@@ -3772,6 +3868,9 @@ window.__lab={
   get quote(){return quoteSel;},
   get designs(){return designs;},
   get location(){return currentLocation;},
+  get clientSupplied(){return clientSupplied;},
+  taxOf:taxOf,
+  loadPreset:(i)=>loadPreset(i),
   pricing:Pricing,
   v3d:{
     get open(){return v3dEl.style.display!=='none';},
