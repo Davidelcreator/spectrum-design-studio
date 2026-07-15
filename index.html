@@ -2043,14 +2043,13 @@ function renderPresets(){
 }
 function renderCatalogPicker(el,cat,rest){
   el.style.maxHeight='none'; el.style.overflow='visible';   // picker scrolls its own color grid
+  // catBrand/catStyle are owned by the dropdowns; loadPreset syncs them when a
+  // shirt is actually loaded. Only fall back to a default when the current value
+  // is missing/stale, so changing a dropdown always sticks.
   const brands=[...new Set(cat.map(x=>x.t.brand))].sort();
   if(!brands.includes(catBrand))catBrand=brands[0];
-  // if a product is active, snap the picker to its brand/style so it stays in view
-  const act=cat.find(x=>x.i===activePreset);
-  if(act){catBrand=act.t.brand;}
   const styles=[...new Set(cat.filter(x=>x.t.brand===catBrand).map(x=>x.t.style))].sort();
   if(!styles.includes(catStyle))catStyle=styles[0];
-  if(act&&act.t.brand===catBrand)catStyle=act.t.style;
   const colors=cat.filter(x=>x.t.brand===catBrand&&x.t.style===catStyle);
 
   el.innerHTML=
@@ -2101,6 +2100,7 @@ function presetRow(mp,i){
 function loadPreset(i){
   const mp=myProducts[i];
   clientSupplied=false; quoteSel.clientSupplied=false;   // catalog pick = we supply the blank
+  const _t=taxOf(mp); if(_t){catBrand=_t.brand;catStyle=_t.style;}   // picker follows the loaded shirt
   const views=mp.views||{front:{src:mp.src,rect:mp.rect}};   // v1 compat
   let pending=0;
   for(const v of ['front','back','side']){
