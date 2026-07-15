@@ -2308,17 +2308,19 @@ function buildStyles(){
       ?'<div class="csupplied">👕 <span><b>Client-supplied garment</b> — you pay for printing only. '+
         'Pick a shirt from the catalog below to switch back to a blank we supply.</span></div>'
       :'';
-    styleSection.innerHTML=csup+'<h3>Product photo</h3><div class="tools">'+
+    styleSection.innerHTML=csup+
+      '<h3>Shop the catalog — brand › style › color</h3>'+
+      '<div class="hint" style="margin-bottom:8px">Pick a <b>brand</b>, then a <b>style</b>, then a <b>color</b> — '+
+      'the proof updates with the real product photo.</div>'+
+      '<div id="presetList" class="presets"></div>'+
+      '<h3 style="margin-top:18px">Or upload your own garment</h3><div class="tools">'+
       '<button class="btn" id="photoBtn">⬆ Upload your own '+vlabel+' photo</button>'+
       '<button class="btn ghost" id="sidePhotoBtn">'+(customViews.side.img?'✓':'⬆')+' Side photo (for spin)</button>'+
       '<button class="btn ghost" id="adjustPABtn" '+(adjustPA?'style="border-color:var(--accent2);color:var(--accent2)"':'')+'>'+
       (adjustPA?'✓ Done adjusting':'Adjust print area')+'</button></div>'+
-      '<div class="hint">Upload your own garment photo and we print on it (printing charge only), '+
-      'or pick from the catalog below. Each location keeps its own photo and print area; '+
-      'prints blend into the fabric’s real wrinkles for photoreal proofs. '+
+      '<div class="hint">Upload your own garment and we print on it (printing charge only). '+
+      'Prints blend into the fabric’s real wrinkles for photoreal proofs. '+
       'In adjust mode: drag the green box to move the print area, its corner to resize.</div>'+
-      '<h3 style="margin-top:16px">Shop the catalog — brand › style › color</h3>'+
-      '<div id="presetList" class="presets"></div>'+
       '<h3 style="margin-top:16px;color:var(--muted);font-size:11px">Manage catalog (admin)</h3>'+
       '<div class="row" style="margin-bottom:8px">'+
       '<input class="clipsearch" style="margin:0;flex:1" id="presetName" placeholder="Name, e.g. Gildan 5000 Navy" />'+
