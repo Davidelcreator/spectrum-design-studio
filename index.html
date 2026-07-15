@@ -1242,7 +1242,7 @@ const PRODUCTS = {
       const w=customPhoto.naturalWidth, h=customPhoto.naturalHeight;
       const sc=Math.min(510/w,510/h), dw=w*sc, dh=h*sc;
       groundShadow(c2,280,280+dh/2+8,dw*.42,16);
-      c2.drawImage(customPhoto,280-dw/2,280-dh/2,dw,dh);
+      c2.drawImage(dispPhoto||customPhoto,280-dw/2,280-dh/2,dw,dh);
     }
   }
 };
@@ -1343,23 +1343,27 @@ const customViews={
   rsleeve:{img:null,rect:{x:384,y:172,w:72,h:74}}
 };
 let customPhoto=customViews.front.img;
+let dispPhoto=null;   // background-stripped canvas for the active view (catalog photos)
 let customRect=customViews.front.rect;
 let photoTarget=null;   // 'side' routes the next upload to the side view
 function syncCustomView(){
   const L=currentLocation;
   if(L==='lsleeve'||L==='rsleeve'){   // sleeve prints live on the front photo
     customPhoto=customViews.front.img;
+    dispPhoto=customViews.front.disp||null;
     customRect=customViews[L].rect;
   }else{
     const v=L==='back'?'back':'front';
     customPhoto=customViews[v].img;
+    dispPhoto=customViews[v].disp||null;
     customRect=customViews[v].rect;
   }
 }
 function setCustomPhoto(img,view){
   const v=view||(currentLocation==='back'?'back':'front');
   customViews[v].img=img;
-  if(v!=='side')customPhoto=img;
+  customViews[v].disp=null;   // uploaded garment photos aren't auto-stripped
+  if(v!=='side'){customPhoto=img;dispPhoto=null;}
 }
 let adjustPA=false;
 // "My Products" preset library: {name, src(dataURL), rect}
@@ -1774,6 +1778,47 @@ function removeBgCanvas(img,tol){
   g.putImageData(id,0,0);
   return c;
 }
+// Knock out the white studio background on catalog product photos so the shirt
+// sits on the app backdrop instead of an ugly white box. Flood-fills inward from
+// the border (so white areas INSIDE the garment survive) and feathers the edge to
+// avoid a hard halo. Connectivity + a modest tolerance protect white shirts: the
+// fill stops at the first garment pixel it meets and never floods the interior.
+const CATALOG_BG_TOL=16, CATALOG_BG_FEATHER=14;
+function stripWhiteBg(img,tol,feather){
+  tol=tol||CATALOG_BG_TOL; feather=feather||CATALOG_BG_FEATHER;
+  const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const g=c.getContext('2d');g.drawImage(img,0,0);
+  const id=g.getImageData(0,0,w,h), d=id.data;
+  let br=0,bg=0,bb=0;                                   // background = corner average
+  [0,(w-1),(h-1)*w,(h-1)*w+(w-1)].forEach(i=>{br+=d[i*4];bg+=d[i*4+1];bb+=d[i*4+2];});
+  br/=4;bg/=4;bb/=4;
+  // only strip a near-white studio background; leave other photos untouched so a
+  // garment that fills the frame (or a non-white backdrop) is never erased
+  if(br<226||bg<226||bb<226||Math.max(br,bg,bb)-Math.min(br,bg,bb)>16)return null;
+  const t2=tol*tol, tf=tol+feather, tf2=tf*tf;
+  const distp=i=>{const dr=d[i*4]-br,dg=d[i*4+1]-bg,db=d[i*4+2]-bb;return dr*dr+dg*dg+db*db;};
+  const seen=new Uint8Array(w*h), stack=[];
+  for(let x=0;x<w;x++){stack.push(x,(h-1)*w+x);}
+  for(let y=0;y<h;y++){stack.push(y*w,y*w+w-1);}
+  while(stack.length){
+    const i=stack.pop();
+    if(seen[i])continue; seen[i]=1;
+    const dp=distp(i);
+    if(dp<=t2){                                         // background → transparent, keep flooding
+      d[i*4+3]=0;
+      const x=i%w, y=(i/w)|0;
+      if(x>0)stack.push(i-1);
+      if(x<w-1)stack.push(i+1);
+      if(y>0)stack.push(i-w);
+      if(y<h-1)stack.push(i+w);
+    }else if(dp<tf2){                                    // soft edge ring: partial alpha, stop here
+      d[i*4+3]=Math.round(((Math.sqrt(dp)-tol)/feather)*255);
+    }                                                    // else: solid garment, stop
+  }
+  g.putImageData(id,0,0);
+  return c;
+}
 function tintCanvas(src,color){
   const w=src.naturalWidth||src.width, h=src.naturalHeight||src.height;
   const c=document.createElement('canvas');c.width=w;c.height=h;
@@ -2067,6 +2112,7 @@ function loadPreset(i){
     img.onload=()=>{
       customViews[v].img=img;
       customViews[v].rect=rect;
+      customViews[v].disp=stripWhiteBg(img)||null;   // knock out a white studio background (null if not white)
       if(--pending===0){
         activePreset=i;
         syncCustomView();
@@ -3557,10 +3603,10 @@ function meshKey3D(){
    photo-turntable illusion, no 3D model needed. ---------- */
 let spinMode=false, spinDirty=false;
 const spinProofs={front:null,back:null,side:null};
-function drawViewPhoto(g,img){
+function drawViewPhoto(g,img,disp){
   const w=img.naturalWidth,h=img.naturalHeight;
   const sc=Math.min(510/w,510/h),dw=w*sc,dh=h*sc;
-  g.drawImage(img,280-dw/2,280-dh/2,dw,dh);
+  g.drawImage(disp||img,280-dw/2,280-dh/2,dw,dh);
 }
 function buildSpinProofs(){
   // sleeve prints ride on the front photo alongside the front design
@@ -3571,7 +3617,7 @@ function buildSpinProofs(){
     if(!customViews[v].img)continue;
     const c=document.createElement('canvas');c.width=c.height=SIZE;
     const g=c.getContext('2d');
-    drawViewPhoto(g,customViews[v].img);
+    drawViewPhoto(g,customViews[v].img,customViews[v].disp);
     const locs=viewLocs[v].filter(l=>designs[l].length);
     if(locs.length){
       const baseCopy=document.createElement('canvas');
